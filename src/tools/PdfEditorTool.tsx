@@ -22,6 +22,7 @@ interface TextItem {
   pdfX: number;
   pdfY: number;
   pdfFontSize: number;
+  dir: 'ltr' | 'rtl';
 }
 
 interface TextEdit {
@@ -168,6 +169,7 @@ export function PdfEditorTool({ onBack }: PdfEditorToolProps) {
           pdfX: item.transform[4],
           pdfY: item.transform[5],
           pdfFontSize: Math.hypot(item.transform[0], item.transform[1]) || 12,
+          dir: item.dir === 'rtl' ? 'rtl' : 'ltr',
         });
       });
 
@@ -361,9 +363,12 @@ export function PdfEditorTool({ onBack }: PdfEditorToolProps) {
     return false;
   };
 
+  const [saveError, setSaveError] = useState<string | null>(null);
+
   const save = async () => {
     if (!pdfBytesRef.current || !hasChanges()) return;
     setProcessing(true);
+    setSaveError(null);
     try {
       const pdf = await PDFDocument.load(pdfBytesRef.current);
       const pages = pdf.getPages();
@@ -393,8 +398,14 @@ export function PdfEditorTool({ onBack }: PdfEditorToolProps) {
             borderWidth: 0,
           });
 
+          const isRtl = item.dir === 'rtl';
+          const textWidth = edit.editedText.length * item.pdfFontSize * 0.5;
+          const drawX = isRtl
+            ? item.pdfX + (item.width * scaleX) - textWidth
+            : item.pdfX;
+
           page.drawText(edit.editedText, {
-            x: item.pdfX,
+            x: Math.max(0, drawX),
             y: item.pdfY + item.pdfFontSize * 0.1,
             size: item.pdfFontSize,
             color: rgb(0, 0, 0),
@@ -455,6 +466,9 @@ export function PdfEditorTool({ onBack }: PdfEditorToolProps) {
         }
       }
       downloadBlob(await pdf.save(), 'edited.pdf');
+    } catch (err) {
+      console.error('Save failed:', err);
+      setSaveError((err as any)?.message || 'Failed to save PDF. Please try again.');
     } finally {
       setProcessing(false);
     }
@@ -590,7 +604,9 @@ export function PdfEditorTool({ onBack }: PdfEditorToolProps) {
                 >
                   {currentData.textItems.map((item) => {
                     const edit = currentData.textEdits.get(item.id);
+                    const isEdited = !!edit && edit.editedText !== edit.originalText;
                     const displayText = edit?.editedText ?? item.text;
+                    const isRtl = item.dir === 'rtl';
                     return (
                       <div
                         key={item.id}
@@ -608,7 +624,7 @@ export function PdfEditorTool({ onBack }: PdfEditorToolProps) {
                           const text = e.clipboardData.getData('text/plain');
                           document.execCommand('insertText', false, text);
                         }}
-                        className="absolute border border-transparent px-0.5 outline-none transition-colors hover:border-blue-300 hover:bg-blue-50/20 focus:border-blue-500 focus:bg-blue-50/40"
+                        className="absolute border px-0.5 outline-none transition-all hover:border-blue-400 hover:bg-blue-100/40 hover:text-black focus:border-blue-500 focus:bg-blue-50/60 focus:text-black"
                         style={{
                           left: item.x,
                           top: item.y,
@@ -616,13 +632,18 @@ export function PdfEditorTool({ onBack }: PdfEditorToolProps) {
                           minHeight: item.height,
                           fontSize: item.fontSize,
                           lineHeight: 1.15,
-                          color: 'transparent',
+                          color: isEdited ? '#1a1a1a' : 'rgba(0,0,0,0.18)',
+                          backgroundColor: isEdited ? 'rgba(255,249,196,0.65)' : 'transparent',
+                          borderColor: isEdited ? 'rgba(245,158,11,0.6)' : 'transparent',
+                          textShadow: isEdited ? '0 0 4px rgba(255,255,255,0.9)' : 'none',
                           caretColor: '#2563eb',
                           pointerEvents: 'auto',
                           whiteSpace: 'pre',
                           cursor: 'text',
+                          direction: isRtl ? 'rtl' : 'ltr',
+                          textAlign: isRtl ? 'right' : 'left',
                         }}
-                        title="Click to edit text"
+                        title={isEdited ? 'Edited — click to modify' : 'Click to edit text'}
                       >
                         {displayText}
                       </div>
@@ -684,6 +705,13 @@ export function PdfEditorTool({ onBack }: PdfEditorToolProps) {
               ? 'Tip: Click anywhere on the page to place a new text annotation.'
               : 'Tip: Draw on the page. Switch to Select mode to edit existing text.'}
           </p>
+
+          {/* Error message */}
+          {saveError && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              <strong>Save failed:</strong> {saveError}
+            </div>
+          )}
 
           {/* Save button */}
           <button
