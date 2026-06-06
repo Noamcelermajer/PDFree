@@ -1,19 +1,9 @@
 import { useState } from 'react';
 import {
-  Merge,
-  Split,
-  RotateCw,
-  Minimize2,
-  FileText,
-  Scan,
-  Type,
-  Image,
-  Images,
-  ShieldCheck,
-  Sparkles,
-  Lock,
-  Wrench,
-  ArrowRight,
+  Merge, Split, RotateCw, Minimize2, FileText, Scan, Type, Image, Images,
+  ShieldCheck, Sparkles, Lock, Wrench, ArrowRight, Trash2, ArrowLeftRight,
+  Unlock, Layers, EyeOff, PenTool, Paintbrush, Crop, Hash, AlignLeft,
+  Palette, BookOpen, FileJson, Edit3,
 } from 'lucide-react';
 import { ToolCard } from './components/ToolCard';
 import { MergeTool } from './tools/MergeTool';
@@ -25,6 +15,23 @@ import { OcrTool } from './tools/OcrTool';
 import { WatermarkTool } from './tools/WatermarkTool';
 import { PdfToImagesTool } from './tools/PdfToImagesTool';
 import { ImagesToPdfTool } from './tools/ImagesToPdfTool';
+import { DeletePagesTool } from './tools/DeletePagesTool';
+import { ReversePagesTool } from './tools/ReversePagesTool';
+import { EncryptTool } from './tools/EncryptTool';
+import { DecryptTool } from './tools/DecryptTool';
+import { FlattenTool } from './tools/FlattenTool';
+import { RemoveMetadataTool } from './tools/RemoveMetadataTool';
+import { SignTool } from './tools/SignTool';
+import { RedactTool } from './tools/RedactTool';
+import { CropTool } from './tools/CropTool';
+import { PdfEditorTool } from './tools/PdfEditorTool';
+import { PageNumbersTool } from './tools/PageNumbersTool';
+import { HeaderFooterTool } from './tools/HeaderFooterTool';
+import { BackgroundColorTool } from './tools/BackgroundColorTool';
+import { SanitizeTool } from './tools/SanitizeTool';
+import { TxtToPdfTool } from './tools/TxtToPdfTool';
+import { MarkdownToPdfTool } from './tools/MarkdownToPdfTool';
+import { PdfToJsonTool } from './tools/PdfToJsonTool';
 
 const categories = [
   {
@@ -35,22 +42,36 @@ const categories = [
       { id: 'merge', title: 'Merge PDFs', description: 'Combine multiple PDFs into one', icon: Merge, component: MergeTool },
       { id: 'split', title: 'Split / Extract', description: 'Extract specific pages or ranges', icon: Split, component: SplitTool },
       { id: 'rotate', title: 'Rotate PDF', description: 'Rotate pages by 90°, 180°, or 270°', icon: RotateCw, component: RotateTool },
-    ],
-  },
-  {
-    id: 'optimize',
-    label: 'Optimize',
-    icon: Sparkles,
-    tools: [
-      { id: 'compress', title: 'Compress', description: 'Reduce file size while keeping quality', icon: Minimize2, component: CompressTool },
+      { id: 'delete', title: 'Delete Pages', description: 'Remove unwanted pages', icon: Trash2, component: DeletePagesTool },
+      { id: 'reverse', title: 'Reverse Pages', description: 'Reverse the page order', icon: ArrowLeftRight, component: ReversePagesTool },
     ],
   },
   {
     id: 'edit',
     label: 'Edit & Annotate',
-    icon: Type,
+    icon: Edit3,
     tools: [
+      { id: 'editor', title: 'PDF Editor', description: 'Annotate with pen, text, shapes & highlight', icon: Edit3, component: PdfEditorTool },
       { id: 'watermark', title: 'Watermark', description: 'Add text watermarks to every page', icon: Type, component: WatermarkTool },
+      { id: 'sign', title: 'Sign PDF', description: 'Draw and apply your signature', icon: PenTool, component: SignTool },
+      { id: 'redact', title: 'Redact', description: 'Black out sensitive content', icon: Paintbrush, component: RedactTool },
+      { id: 'crop', title: 'Crop PDF', description: 'Trim margins from all pages', icon: Crop, component: CropTool },
+      { id: 'pagenumbers', title: 'Page Numbers', description: 'Add customizable page numbering', icon: Hash, component: PageNumbersTool },
+      { id: 'headerfooter', title: 'Header & Footer', description: 'Add headers and footers', icon: AlignLeft, component: HeaderFooterTool },
+      { id: 'background', title: 'Background Color', description: 'Change page background color', icon: Palette, component: BackgroundColorTool },
+      { id: 'flatten', title: 'Flatten PDF', description: 'Merge forms into page content', icon: Layers, component: FlattenTool },
+    ],
+  },
+  {
+    id: 'convert',
+    label: 'Convert',
+    icon: Sparkles,
+    tools: [
+      { id: 'pdf2img', title: 'PDF to Images', description: 'Export pages as PNG images', icon: Image, component: PdfToImagesTool },
+      { id: 'img2pdf', title: 'Images to PDF', description: 'Combine images into a single PDF', icon: Images, component: ImagesToPdfTool },
+      { id: 'txt2pdf', title: 'TXT to PDF', description: 'Convert plain text to PDF', icon: FileText, component: TxtToPdfTool },
+      { id: 'md2pdf', title: 'Markdown to PDF', description: 'Convert Markdown to styled PDF', icon: BookOpen, component: MarkdownToPdfTool },
+      { id: 'pdf2json', title: 'PDF to JSON', description: 'Extract text & metadata as JSON', icon: FileJson, component: PdfToJsonTool },
     ],
   },
   {
@@ -60,15 +81,25 @@ const categories = [
     tools: [
       { id: 'text', title: 'Extract Text', description: 'Pull text content from PDF pages', icon: FileText, component: TextExtractTool },
       { id: 'ocr', title: 'OCR', description: 'Recognize text in scanned PDFs & images', icon: Scan, component: OcrTool },
-      { id: 'pdf2img', title: 'PDF to Images', description: 'Export pages as PNG images', icon: Image, component: PdfToImagesTool },
     ],
   },
   {
-    id: 'convert',
-    label: 'Convert',
-    icon: Image,
+    id: 'optimize',
+    label: 'Optimize',
+    icon: Minimize2,
     tools: [
-      { id: 'img2pdf', title: 'Images to PDF', description: 'Combine images into a single PDF', icon: Images, component: ImagesToPdfTool },
+      { id: 'compress', title: 'Compress', description: 'Reduce file size while keeping quality', icon: Minimize2, component: CompressTool },
+      { id: 'removemeta', title: 'Remove Metadata', description: 'Strip author, dates, and properties', icon: EyeOff, component: RemoveMetadataTool },
+      { id: 'sanitize', title: 'Sanitize PDF', description: 'Clean metadata, flatten forms, etc.', icon: ShieldCheck, component: SanitizeTool },
+    ],
+  },
+  {
+    id: 'secure',
+    label: 'Secure',
+    icon: Lock,
+    tools: [
+      { id: 'encrypt', title: 'Encrypt PDF', description: 'Add password protection', icon: Lock, component: EncryptTool },
+      { id: 'decrypt', title: 'Decrypt PDF', description: 'Remove password protection', icon: Unlock, component: DecryptTool },
     ],
   },
 ];
@@ -100,7 +131,6 @@ function App() {
 
   return (
     <div className="min-h-full bg-background">
-      {/* Hero */}
       <header className="border-b border-border bg-surface">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <div className="text-xl font-bold text-primary">PDFree</div>
@@ -117,7 +147,7 @@ function App() {
             Your PDF toolkit, <span className="text-primary">private by design</span>
           </h1>
           <p className="mx-auto mt-4 max-w-2xl text-base text-muted">
-            Merge, split, compress, convert, and edit PDFs directly in your browser.
+            Merge, split, compress, convert, edit, and secure PDFs directly in your browser.
             Everything stays on your device — no uploads, no tracking, no servers.
           </p>
           <div className="mt-6 flex items-center justify-center gap-4 text-xs text-muted">
@@ -127,13 +157,13 @@ function App() {
           </div>
         </div>
 
-        {/* Categories */}
         <div className="space-y-10">
           {categories.map((cat) => (
             <section key={cat.id}>
               <div className="mb-4 flex items-center gap-2">
                 <cat.icon size={18} className="text-primary" />
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">{cat.label}</h2>
+                <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">{cat.tools.length}</span>
               </div>
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {cat.tools.map((tool) => (
@@ -150,7 +180,6 @@ function App() {
           ))}
         </div>
 
-        {/* Footer CTA */}
         <div className="mt-16 rounded-2xl border border-border bg-surface p-8 text-center shadow-sm">
           <h3 className="text-lg font-semibold text-slate-900">Open source & self-hostable</h3>
           <p className="mt-2 text-sm text-muted">
