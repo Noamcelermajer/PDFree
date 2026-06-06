@@ -3,6 +3,7 @@ import { FileDropzone } from '../components/FileDropzone';
 import { ToolLayout } from '../components/ToolLayout';
 import { pdfjsLib } from '../utils/pdfjs';
 import { PDFDocument, rgb } from 'pdf-lib';
+import { getFontForText, clearPdfFontCache } from '../utils/fontManager';
 import { downloadBlob } from '../utils/pdfHelpers';
 import {
   Pencil, Type, Highlighter, Square, Circle, Undo, Check,
@@ -375,10 +376,22 @@ export function PdfEditorTool({ onBack }: PdfEditorToolProps) {
 
   const [saveError, setSaveError] = useState<string | null>(null);
 
+  /* ---------- Font substitution for text edits ---------- */
+  const embedEditFonts = async (pdf: PDFDocument, edits: TextEdit[]) => {
+    const fontMap = new Map<string, any>();
+    for (const edit of edits) {
+      if (edit.editedText === edit.originalText) continue;
+      const font = await getFontForText(pdf, edit.editedText);
+      fontMap.set(edit.id, font);
+    }
+    return fontMap;
+  };
+
   const save = async () => {
     if (!pdfBytesRef.current || !hasChanges()) return;
     setProcessing(true);
     setSaveError(null);
+    clearPdfFontCache();
     try {
       const pdf = await PDFDocument.load(pdfBytesRef.current);
       const pages = pdf.getPages();
@@ -389,10 +402,13 @@ export function PdfEditorTool({ onBack }: PdfEditorToolProps) {
         const scaleX = pw / data.viewportWidth;
         const scaleY = ph / data.viewportHeight;
 
-        // Apply text edits: whiteout + redraw
-        for (const edit of data.textEdits.values()) {
-          if (edit.editedText === edit.originalText) continue;
+        // Apply text edits: whiteout + redraw with proper fonts
+        const allEdits = Array.from(data.textEdits.values()).filter(e => e.editedText !== e.originalText);
+        const fontMap = allEdits.length > 0 ? await embedEditFonts(pdf, allEdits) : new Map();
+
+        for (const edit of allEdits) {
           const item = edit.item;
+          const font = fontMap.get(edit.id);
           const estimatedWidth = Math.max(
             item.pdfFontSize * 0.5 * edit.editedText.length,
             item.pdfFontSize * 0.5 * edit.originalText.length
@@ -419,6 +435,7 @@ export function PdfEditorTool({ onBack }: PdfEditorToolProps) {
             y: item.pdfY + item.pdfFontSize * 0.1,
             size: item.pdfFontSize,
             color: rgb(0, 0, 0),
+            font,
           });
         }
 
