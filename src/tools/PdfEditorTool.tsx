@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { FileDropzone } from '../components/FileDropzone';
 import { ToolLayout } from '../components/ToolLayout';
 import { pdfjsLib } from '../utils/pdfjs';
@@ -6,7 +6,7 @@ import { PDFDocument, rgb } from 'pdf-lib';
 import { downloadBlob } from '../utils/pdfHelpers';
 import { Pencil, Type, Highlighter, Square, Circle, Undo, Check } from 'lucide-react';
 
-type Tool = 'select' | 'pen' | 'text' | 'highlight' | 'rect' | 'ellipse';
+type Tool = 'pen' | 'text' | 'highlight' | 'rect' | 'ellipse';
 
 interface Annotation {
   tool: Tool;
@@ -25,106 +25,101 @@ interface PdfEditorToolProps {
 
 export function PdfEditorTool({ onBack }: PdfEditorToolProps) {
   const [file, setFile] = useState<File | null>(null);
-  const [pageImage, setPageImage] = useState<string>('');
-  const [scale] = useState(1.5);
   const [tool, setTool] = useState<Tool>('pen');
   const [color, setColor] = useState('#000000');
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
-  const [isDrawing, setIsDrawing] = useState(false);
-  const [currentAnno, setCurrentAnno] = useState<Annotation | null>(null);
   const [processing, setProcessing] = useState(false);
   const [textInput, setTextInput] = useState('');
   const [textPos, setTextPos] = useState<{ x: number; y: number } | null>(null);
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const bgImageRef = useRef<HTMLImageElement | null>(null);
   const pdfBytesRef = useRef<Uint8Array | null>(null);
+  const isDrawingRef = useRef(false);
+  const currentAnnoRef = useRef<Annotation | null>(null);
+  const annotationsRef = useRef<Annotation[]>([]);
 
   const colors = ['#000000', '#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6'];
+
+  // Keep ref in sync
+  useEffect(() => { annotationsRef.current = annotations; }, [annotations]);
+
+  const drawAnnotations = (ctx: CanvasRenderingContext2D, list: Annotation[]) => {
+    list.forEach((a) => {
+      ctx.strokeStyle = a.color;
+      ctx.fillStyle = a.color + '40';
+      ctx.lineWidth = a.tool === 'highlight' ? 12 : 2;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+
+      if ((a.tool === 'pen' || a.tool === 'highlight') && a.points && a.points.length > 1) {
+        ctx.beginPath();
+        ctx.moveTo(a.points[0].x, a.points[0].y);
+        a.points.forEach((p) => ctx.lineTo(p.x, p.y));
+        ctx.stroke();
+      } else if (a.tool === 'rect' && a.x !== undefined && a.width !== undefined) {
+        ctx.fillRect(a.x, a.y!, a.width, a.height!);
+        ctx.strokeRect(a.x, a.y!, a.width, a.height!);
+      } else if (a.tool === 'ellipse' && a.x !== undefined && a.width !== undefined) {
+        ctx.beginPath();
+        ctx.ellipse(
+          a.x + a.width / 2,
+          a.y! + a.height! / 2,
+          Math.abs(a.width / 2),
+          Math.abs(a.height! / 2),
+          0, 0, Math.PI * 2
+        );
+        ctx.fill();
+        ctx.stroke();
+      } else if (a.tool === 'text' && a.text && a.x !== undefined) {
+        ctx.font = '16px sans-serif';
+        ctx.fillStyle = a.color;
+        ctx.fillText(a.text, a.x, a.y!);
+      }
+    });
+  };
+
+  const redrawCanvas = () => {
+    const canvas = canvasRef.current;
+    const bg = bgImageRef.current;
+    if (!canvas || !bg) return;
+    const ctx = canvas.getContext('2d')!;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(bg, 0, 0);
+    drawAnnotations(ctx, annotationsRef.current);
+  };
 
   const handleFile = async (files: File[]) => {
     const f = files[0];
     setFile(f);
+    setAnnotations([]);
+    annotationsRef.current = [];
+
     const bytes = new Uint8Array(await f.arrayBuffer());
     pdfBytesRef.current = bytes;
+
     const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
     const page = await pdf.getPage(1);
-    const viewport = page.getViewport({ scale });
-    const canvas = document.createElement('canvas');
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
-    const ctx = canvas.getContext('2d')!;
-    await page.render({ canvasContext: ctx, canvas, viewport }).promise;
-    setPageImage(canvas.toDataURL('image/png'));
-    setAnnotations([]);
-  };
+    const viewport = page.getViewport({ scale: 1.5 });
 
-  const redraw = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || !pageImage) return;
-    const ctx = canvas.getContext('2d')!;
+    const renderCanvas = document.createElement('canvas');
+    renderCanvas.width = viewport.width;
+    renderCanvas.height = viewport.height;
+    const rctx = renderCanvas.getContext('2d')!;
+    await page.render({ canvasContext: rctx, canvas: renderCanvas, viewport }).promise;
+
     const img = new Image();
     img.onload = () => {
-      canvas.width = img.width;
-      canvas.height = img.height;
-      ctx.drawImage(img, 0, 0);
-
-      annotations.forEach((a) => {
-        ctx.strokeStyle = a.color;
-        ctx.fillStyle = a.color + '40';
-        ctx.lineWidth = a.tool === 'highlight' ? 12 : 2;
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-
-        if (a.tool === 'pen' && a.points) {
-          ctx.beginPath();
-          ctx.moveTo(a.points[0].x, a.points[0].y);
-          a.points.forEach((p) => ctx.lineTo(p.x, p.y));
-          ctx.stroke();
-        } else if (a.tool === 'highlight' && a.points) {
-          ctx.beginPath();
-          ctx.moveTo(a.points[0].x, a.points[0].y);
-          a.points.forEach((p) => ctx.lineTo(p.x, p.y));
-          ctx.stroke();
-        } else if (a.tool === 'rect' && a.x !== undefined) {
-          ctx.fillRect(a.x, a.y!, a.width!, a.height!);
-          ctx.strokeRect(a.x, a.y!, a.width!, a.height!);
-        } else if (a.tool === 'ellipse' && a.x !== undefined) {
-          ctx.beginPath();
-          ctx.ellipse(a.x + a.width! / 2, a.y! + a.height! / 2, Math.abs(a.width! / 2), Math.abs(a.height! / 2), 0, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.stroke();
-        } else if (a.tool === 'text' && a.text) {
-          ctx.font = '16px sans-serif';
-          ctx.fillStyle = a.color;
-          ctx.fillText(a.text, a.x!, a.y!);
-        }
-      });
-
-      if (currentAnno) {
-        ctx.strokeStyle = currentAnno.color;
-        ctx.fillStyle = currentAnno.color + '40';
-        ctx.lineWidth = currentAnno.tool === 'highlight' ? 12 : 2;
-        if (currentAnno.tool === 'pen' && currentAnno.points) {
-          ctx.beginPath();
-          ctx.moveTo(currentAnno.points[0].x, currentAnno.points[0].y);
-          currentAnno.points.forEach((p) => ctx.lineTo(p.x, p.y));
-          ctx.stroke();
-        } else if (currentAnno.tool === 'rect' && currentAnno.x !== undefined) {
-          ctx.fillRect(currentAnno.x, currentAnno.y!, currentAnno.width!, currentAnno.height!);
-          ctx.strokeRect(currentAnno.x, currentAnno.y!, currentAnno.width!, currentAnno.height!);
-        } else if (currentAnno.tool === 'ellipse' && currentAnno.x !== undefined) {
-          ctx.beginPath();
-          ctx.ellipse(currentAnno.x + currentAnno.width! / 2, currentAnno.y! + currentAnno.height! / 2, Math.abs(currentAnno.width! / 2), Math.abs(currentAnno.height! / 2), 0, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.stroke();
-        }
+      bgImageRef.current = img;
+      const canvas = canvasRef.current;
+      if (canvas) {
+        canvas.width = img.width;
+        canvas.height = img.height;
+        redrawCanvas();
       }
     };
-    img.src = pageImage;
-  }, [pageImage, annotations, currentAnno]);
-
-  useEffect(() => {
-    redraw();
-  }, [redraw]);
+    img.src = renderCanvas.toDataURL('image/png');
+  };
 
   const getPos = (e: React.MouseEvent) => {
     const canvas = canvasRef.current!;
@@ -138,39 +133,87 @@ export function PdfEditorTool({ onBack }: PdfEditorToolProps) {
       setTextPos(pos);
       return;
     }
-    setIsDrawing(true);
+    isDrawingRef.current = true;
     const pos = getPos(e);
-    setCurrentAnno({ tool, color, points: [pos], x: pos.x, y: pos.y, width: 0, height: 0 });
+    currentAnnoRef.current = { tool, color, points: [pos], x: pos.x, y: pos.y, width: 0, height: 0 };
   };
 
   const move = (e: React.MouseEvent) => {
-    if (!isDrawing || !currentAnno) return;
+    if (!isDrawingRef.current || !currentAnnoRef.current) return;
     const pos = getPos(e);
+    const a = currentAnnoRef.current;
+    const canvas = canvasRef.current!;
+    const ctx = canvas.getContext('2d')!;
+
     if (tool === 'pen' || tool === 'highlight') {
-      setCurrentAnno({ ...currentAnno, points: [...(currentAnno.points || []), pos] });
+      a.points!.push(pos);
+      ctx.strokeStyle = a.color;
+      ctx.lineWidth = a.tool === 'highlight' ? 12 : 2;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      const pts = a.points!;
+      ctx.moveTo(pts[pts.length - 2].x, pts[pts.length - 2].y);
+      ctx.lineTo(pos.x, pos.y);
+      ctx.stroke();
     } else if (tool === 'rect' || tool === 'ellipse') {
-      setCurrentAnno({
-        ...currentAnno,
-        width: pos.x - currentAnno.x!,
-        height: pos.y - currentAnno.y!,
-      });
+      a.width = pos.x - a.x!;
+      a.height = pos.y - a.y!;
+      redrawCanvas();
+      ctx.strokeStyle = a.color;
+      ctx.fillStyle = a.color + '40';
+      ctx.lineWidth = 2;
+      if (tool === 'rect') {
+        ctx.fillRect(a.x!, a.y!, a.width, a.height);
+        ctx.strokeRect(a.x!, a.y!, a.width, a.height);
+      } else {
+        ctx.beginPath();
+        ctx.ellipse(
+          a.x! + a.width / 2,
+          a.y! + a.height / 2,
+          Math.abs(a.width / 2),
+          Math.abs(a.height / 2),
+          0, 0, Math.PI * 2
+        );
+        ctx.fill();
+        ctx.stroke();
+      }
     }
   };
 
   const end = () => {
-    if (!isDrawing || !currentAnno) return;
-    setAnnotations((prev) => [...prev, currentAnno]);
-    setCurrentAnno(null);
-    setIsDrawing(false);
+    if (!isDrawingRef.current || !currentAnnoRef.current) return;
+    const a = currentAnnoRef.current;
+    if ((a.tool === 'pen' || a.tool === 'highlight') && a.points && a.points.length > 1) {
+      setAnnotations((prev) => [...prev, a]);
+    } else if ((a.tool === 'rect' || a.tool === 'ellipse') && a.width !== undefined && Math.abs(a.width) > 2) {
+      setAnnotations((prev) => [...prev, a]);
+    }
+    currentAnnoRef.current = null;
+    isDrawingRef.current = false;
+    redrawCanvas();
   };
 
-  const undo = () => setAnnotations((prev) => prev.slice(0, -1));
+  const undo = () => {
+    setAnnotations((prev) => {
+      const next = prev.slice(0, -1);
+      annotationsRef.current = next;
+      return next;
+    });
+    setTimeout(redrawCanvas, 0);
+  };
 
   const addText = () => {
     if (!textPos || !textInput) return;
-    setAnnotations((prev) => [...prev, { tool: 'text', color, text: textInput, x: textPos.x, y: textPos.y + 16 }]);
+    const a: Annotation = { tool: 'text', color, text: textInput, x: textPos.x, y: textPos.y + 16 };
+    setAnnotations((prev) => {
+      const next = [...prev, a];
+      annotationsRef.current = next;
+      return next;
+    });
     setTextPos(null);
     setTextInput('');
+    setTimeout(redrawCanvas, 0);
   };
 
   const save = async () => {
@@ -190,9 +233,9 @@ export function PdfEditorTool({ onBack }: PdfEditorToolProps) {
         const g = parseInt(c.slice(3, 5), 16) / 255;
         const b = parseInt(c.slice(5, 7), 16) / 255;
 
-        if (a.tool === 'rect') {
+        if (a.tool === 'rect' && a.x !== undefined) {
           page.drawRectangle({
-            x: a.x! * scaleX,
+            x: a.x * scaleX,
             y: ph - (a.y! + a.height!) * scaleY,
             width: Math.abs(a.width!) * scaleX,
             height: Math.abs(a.height!) * scaleY,
@@ -201,9 +244,9 @@ export function PdfEditorTool({ onBack }: PdfEditorToolProps) {
             borderColor: rgb(r, g, b),
             borderWidth: 1,
           });
-        } else if (a.tool === 'ellipse') {
+        } else if (a.tool === 'ellipse' && a.x !== undefined) {
           page.drawEllipse({
-            x: (a.x! + a.width! / 2) * scaleX,
+            x: (a.x + a.width! / 2) * scaleX,
             y: ph - (a.y! + a.height! / 2) * scaleY,
             xScale: Math.abs(a.width! / 2) * scaleX,
             yScale: Math.abs(a.height! / 2) * scaleY,
@@ -250,7 +293,7 @@ export function PdfEditorTool({ onBack }: PdfEditorToolProps) {
   return (
     <ToolLayout title="PDF Editor" description="Annotate the first page with pen, highlight, text, and shapes." onBack={onBack}>
       <FileDropzone onFiles={handleFile} multiple={false} />
-      {file && pageImage && (
+      {file && bgImageRef.current && (
         <div className="mt-6 space-y-4">
           {/* Toolbar */}
           <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-slate-50 p-3">

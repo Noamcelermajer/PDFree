@@ -22,6 +22,7 @@ export function EncryptTool({ onBack }: AddBlankPageToolProps) {
     try {
       const pdf = await PDFDocument.load(await file.arrayBuffer());
       const blank = await PDFDocument.create();
+      blank.addPage([612, 792]);
       const [page] = await pdf.copyPages(blank, [0]);
       if (position === 'start') pdf.insertPage(0, page);
       else pdf.addPage(page);

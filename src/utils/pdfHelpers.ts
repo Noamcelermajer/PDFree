@@ -1,4 +1,4 @@
-import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import { PDFDocument, rgb, StandardFonts, degrees } from 'pdf-lib';
 
 export async function loadPdf(file: File): Promise<PDFDocument> {
   const arrayBuffer = await file.arrayBuffer();
@@ -25,10 +25,10 @@ export async function splitPdf(file: File, pageRanges: string): Promise<Uint8Arr
   return newPdf.save();
 }
 
-export async function rotatePdf(file: File, degrees: number): Promise<Uint8Array> {
+export async function rotatePdf(file: File, degreesVal: number): Promise<Uint8Array> {
   const pdf = await loadPdf(file);
   pdf.getPages().forEach((page) => {
-    page.setRotation(degrees as any);
+    page.setRotation(degrees(degreesVal));
   });
   return pdf.save();
 }

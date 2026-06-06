@@ -98,7 +98,7 @@ const categories = [
     label: 'Secure',
     icon: Lock,
     tools: [
-      { id: 'encrypt', title: 'Encrypt PDF', description: 'Add password protection', icon: Lock, component: EncryptTool },
+      { id: 'encrypt', title: 'Add Blank Page', description: 'Insert a blank page at start or end', icon: Lock, component: EncryptTool },
       { id: 'decrypt', title: 'Decrypt PDF', description: 'Remove password protection', icon: Unlock, component: DecryptTool },
     ],
   },
