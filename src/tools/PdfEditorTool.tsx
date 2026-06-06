@@ -1,12 +1,35 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { FileDropzone } from '../components/FileDropzone';
 import { ToolLayout } from '../components/ToolLayout';
 import { pdfjsLib } from '../utils/pdfjs';
 import { PDFDocument, rgb } from 'pdf-lib';
 import { downloadBlob } from '../utils/pdfHelpers';
-import { Pencil, Type, Highlighter, Square, Circle, Undo, Check } from 'lucide-react';
+import {
+  Pencil, Type, Highlighter, Square, Circle, Undo, Check,
+  MousePointer2, ChevronLeft, ChevronRight, FileText,
+} from 'lucide-react';
 
-type Tool = 'pen' | 'text' | 'highlight' | 'rect' | 'ellipse';
+type Tool = 'select' | 'pen' | 'text' | 'highlight' | 'rect' | 'ellipse';
+
+interface TextItem {
+  id: string;
+  text: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  fontSize: number;
+  pdfX: number;
+  pdfY: number;
+  pdfFontSize: number;
+}
+
+interface TextEdit {
+  id: string;
+  originalText: string;
+  editedText: string;
+  item: TextItem;
+}
 
 interface Annotation {
   tool: Tool;
@@ -19,32 +42,45 @@ interface Annotation {
   color: string;
 }
 
+interface PageData {
+  pageNum: number;
+  viewportWidth: number;
+  viewportHeight: number;
+  scale: number;
+  textItems: TextItem[];
+  textEdits: Map<string, TextEdit>;
+  annotations: Annotation[];
+  bgImageUrl: string;
+}
+
 interface PdfEditorToolProps {
   onBack: () => void;
 }
 
 export function PdfEditorTool({ onBack }: PdfEditorToolProps) {
   const [file, setFile] = useState<File | null>(null);
-  const [tool, setTool] = useState<Tool>('pen');
+  const [tool, setTool] = useState<Tool>('select');
   const [color, setColor] = useState('#000000');
-  const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [processing, setProcessing] = useState(false);
   const [textInput, setTextInput] = useState('');
   const [textPos, setTextPos] = useState<{ x: number; y: number } | null>(null);
+  const [pageData, setPageData] = useState<Map<number, PageData>>(new Map());
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(0);
+  const [loadingPage, setLoadingPage] = useState(false);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const bgImageRef = useRef<HTMLImageElement | null>(null);
   const pdfBytesRef = useRef<Uint8Array | null>(null);
+  const pdfDocRef = useRef<any>(null);
   const isDrawingRef = useRef(false);
   const currentAnnoRef = useRef<Annotation | null>(null);
-  const annotationsRef = useRef<Annotation[]>([]);
+  const isDrawingTool = tool !== 'select';
 
   const colors = ['#000000', '#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6'];
+  const currentData = pageData.get(currentPage);
 
-  // Keep ref in sync
-  useEffect(() => { annotationsRef.current = annotations; }, [annotations]);
-
-  const drawAnnotations = (ctx: CanvasRenderingContext2D, list: Annotation[]) => {
+  /* ---------- Redraw canvas for current page ---------- */
+  const redrawAnnotations = useCallback((ctx: CanvasRenderingContext2D, list: Annotation[]) => {
     list.forEach((a) => {
       ctx.strokeStyle = a.color;
       ctx.fillStyle = a.color + '40';
@@ -58,17 +94,17 @@ export function PdfEditorTool({ onBack }: PdfEditorToolProps) {
         a.points.forEach((p) => ctx.lineTo(p.x, p.y));
         ctx.stroke();
       } else if (a.tool === 'rect' && a.x !== undefined && a.width !== undefined) {
-        ctx.fillRect(a.x, a.y!, a.width, a.height!);
-        ctx.strokeRect(a.x, a.y!, a.width, a.height!);
+        const x = Math.min(a.x, a.x + a.width);
+        const y = Math.min(a.y!, a.y! + a.height!);
+        const w = Math.abs(a.width);
+        const h = Math.abs(a.height!);
+        ctx.fillRect(x, y, w, h);
+        ctx.strokeRect(x, y, w, h);
       } else if (a.tool === 'ellipse' && a.x !== undefined && a.width !== undefined) {
+        const cx = a.x + a.width / 2;
+        const cy = a.y! + a.height! / 2;
         ctx.beginPath();
-        ctx.ellipse(
-          a.x + a.width / 2,
-          a.y! + a.height! / 2,
-          Math.abs(a.width / 2),
-          Math.abs(a.height! / 2),
-          0, 0, Math.PI * 2
-        );
+        ctx.ellipse(cx, cy, Math.abs(a.width / 2), Math.abs(a.height! / 2), 0, 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
       } else if (a.tool === 'text' && a.text && a.x !== undefined) {
@@ -77,68 +113,124 @@ export function PdfEditorTool({ onBack }: PdfEditorToolProps) {
         ctx.fillText(a.text, a.x, a.y!);
       }
     });
-  };
+  }, []);
 
-  const redrawCanvas = () => {
+  const redrawCanvas = useCallback(() => {
     const canvas = canvasRef.current;
-    const bg = bgImageRef.current;
-    if (!canvas || !bg) return;
+    const data = pageData.get(currentPage);
+    if (!canvas || !data) return;
+    canvas.width = data.viewportWidth;
+    canvas.height = data.viewportHeight;
     const ctx = canvas.getContext('2d')!;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(bg, 0, 0);
-    drawAnnotations(ctx, annotationsRef.current);
+    redrawAnnotations(ctx, data.annotations);
+  }, [currentPage, pageData, redrawAnnotations]);
+
+  useEffect(() => {
+    redrawCanvas();
+  }, [redrawCanvas]);
+
+  /* ---------- Load / render a page ---------- */
+  const loadPage = async (pageNum: number) => {
+    if (!pdfDocRef.current || pageData.has(pageNum)) return;
+    setLoadingPage(true);
+    try {
+      const page = await pdfDocRef.current.getPage(pageNum);
+      const scale = 1.5;
+      const viewport = page.getViewport({ scale });
+
+      // Render page to offscreen canvas → data URL
+      const renderCanvas = document.createElement('canvas');
+      renderCanvas.width = viewport.width;
+      renderCanvas.height = viewport.height;
+      const rctx = renderCanvas.getContext('2d')!;
+      await page.render({ canvasContext: rctx, viewport }).promise;
+      const bgImageUrl = renderCanvas.toDataURL('image/png');
+
+      // Extract text content with positions
+      const textContent = await page.getTextContent();
+      const textItems: TextItem[] = [];
+      textContent.items.forEach((item: any, idx: number) => {
+        if (!item.str && item.str !== '') return;
+        const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
+        const fontHeight = Math.hypot(tx[0], tx[1]) || 12;
+        const fontWidthFactor = Math.abs(item.transform[0]) || fontHeight;
+        const viewportWidth = item.width * (fontHeight / fontWidthFactor);
+
+        textItems.push({
+          id: `t-${pageNum}-${idx}`,
+          text: item.str,
+          x: tx[4],
+          y: tx[5] - fontHeight * 0.85,
+          width: viewportWidth,
+          height: fontHeight * 1.2,
+          fontSize: fontHeight,
+          pdfX: item.transform[4],
+          pdfY: item.transform[5],
+          pdfFontSize: Math.hypot(item.transform[0], item.transform[1]) || 12,
+        });
+      });
+
+      const newData: PageData = {
+        pageNum,
+        viewportWidth: viewport.width,
+        viewportHeight: viewport.height,
+        scale,
+        textItems,
+        textEdits: new Map(),
+        annotations: [],
+        bgImageUrl,
+      };
+
+      setPageData((prev) => new Map(prev).set(pageNum, newData));
+    } finally {
+      setLoadingPage(false);
+    }
   };
 
+  /* ---------- File upload ---------- */
   const handleFile = async (files: File[]) => {
     const f = files[0];
     setFile(f);
-    setAnnotations([]);
-    annotationsRef.current = [];
+    setPageData(new Map());
+    setCurrentPage(1);
+    setTool('select');
 
     const bytes = new Uint8Array(await f.arrayBuffer());
     pdfBytesRef.current = bytes;
 
-    const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
-    const page = await pdf.getPage(1);
-    const viewport = page.getViewport({ scale: 1.5 });
-
-    const renderCanvas = document.createElement('canvas');
-    renderCanvas.width = viewport.width;
-    renderCanvas.height = viewport.height;
-    const rctx = renderCanvas.getContext('2d')!;
-    await page.render({ canvasContext: rctx, canvas: renderCanvas, viewport }).promise;
-
-    const img = new Image();
-    img.onload = () => {
-      bgImageRef.current = img;
-      const canvas = canvasRef.current;
-      if (canvas) {
-        canvas.width = img.width;
-        canvas.height = img.height;
-        redrawCanvas();
-      }
-    };
-    img.src = renderCanvas.toDataURL('image/png');
+    const pdf = await pdfjsLib.getDocument({ data: bytes.slice() }).promise;
+    pdfDocRef.current = pdf;
+    setTotalPages(pdf.numPages);
+    await loadPage(1);
   };
 
-  const getPos = (e: React.MouseEvent) => {
+  /* ---------- Page navigation ---------- */
+  const goToPage = (pageNum: number) => {
+    if (pageNum < 1 || pageNum > totalPages) return;
+    setCurrentPage(pageNum);
+    if (!pageData.has(pageNum)) {
+      loadPage(pageNum);
+    }
+  };
+
+  /* ---------- Annotation mouse handlers ---------- */
+  const getPos = (e: React.MouseEvent | React.TouchEvent) => {
     const canvas = canvasRef.current!;
     const rect = canvas.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+    return { x: clientX - rect.left, y: clientY - rect.top };
   };
 
-  const start = (e: React.MouseEvent) => {
-    if (tool === 'text') {
-      const pos = getPos(e);
-      setTextPos(pos);
-      return;
-    }
+  const start = (e: React.MouseEvent | React.TouchEvent) => {
+    if (tool === 'select' || tool === 'text') return;
     isDrawingRef.current = true;
     const pos = getPos(e);
     currentAnnoRef.current = { tool, color, points: [pos], x: pos.x, y: pos.y, width: 0, height: 0 };
   };
 
-  const move = (e: React.MouseEvent) => {
+  const move = (e: React.MouseEvent | React.TouchEvent) => {
     if (!isDrawingRef.current || !currentAnnoRef.current) return;
     const pos = getPos(e);
     const a = currentAnnoRef.current;
@@ -164,15 +256,17 @@ export function PdfEditorTool({ onBack }: PdfEditorToolProps) {
       ctx.fillStyle = a.color + '40';
       ctx.lineWidth = 2;
       if (tool === 'rect') {
-        ctx.fillRect(a.x!, a.y!, a.width, a.height);
-        ctx.strokeRect(a.x!, a.y!, a.width, a.height);
+        const x = Math.min(a.x!, a.x! + a.width);
+        const y = Math.min(a.y!, a.y! + a.height);
+        ctx.fillRect(x, y, Math.abs(a.width), Math.abs(a.height));
+        ctx.strokeRect(x, y, Math.abs(a.width), Math.abs(a.height));
       } else {
         ctx.beginPath();
         ctx.ellipse(
           a.x! + a.width / 2,
           a.y! + a.height / 2,
           Math.abs(a.width / 2),
-          Math.abs(a.height / 2),
+          Math.abs(a.height! / 2),
           0, 0, Math.PI * 2
         );
         ctx.fill();
@@ -184,95 +278,179 @@ export function PdfEditorTool({ onBack }: PdfEditorToolProps) {
   const end = () => {
     if (!isDrawingRef.current || !currentAnnoRef.current) return;
     const a = currentAnnoRef.current;
+    const data = pageData.get(currentPage);
+    if (!data) return;
+
+    let newAnnotation: Annotation | null = null;
     if ((a.tool === 'pen' || a.tool === 'highlight') && a.points && a.points.length > 1) {
-      setAnnotations((prev) => [...prev, a]);
-    } else if ((a.tool === 'rect' || a.tool === 'ellipse') && a.width !== undefined && Math.abs(a.width) > 2) {
-      setAnnotations((prev) => [...prev, a]);
+      newAnnotation = a;
+    } else if ((a.tool === 'rect' || a.tool === 'ellipse') && a.width !== undefined) {
+      const w = Math.abs(a.width);
+      const h = Math.abs(a.height || 0);
+      if (w > 2 || h > 2) newAnnotation = a;
+    }
+
+    if (newAnnotation) {
+      const updated = new Map(pageData);
+      updated.set(currentPage, { ...data, annotations: [...data.annotations, newAnnotation] });
+      setPageData(updated);
     }
     currentAnnoRef.current = null;
     isDrawingRef.current = false;
-    redrawCanvas();
   };
 
   const undo = () => {
-    setAnnotations((prev) => {
-      const next = prev.slice(0, -1);
-      annotationsRef.current = next;
-      return next;
-    });
-    setTimeout(redrawCanvas, 0);
+    const data = pageData.get(currentPage);
+    if (!data || data.annotations.length === 0) return;
+    const updated = new Map(pageData);
+    updated.set(currentPage, { ...data, annotations: data.annotations.slice(0, -1) });
+    setPageData(updated);
   };
 
-  const addText = () => {
+  /* ---------- Text annotation (add new text) ---------- */
+  const handleCanvasClickForText = (e: React.MouseEvent) => {
+    if (tool !== 'text') return;
+    const canvas = canvasRef.current!;
+    const rect = canvas.getBoundingClientRect();
+    setTextPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+  };
+
+  const addTextAnnotation = () => {
     if (!textPos || !textInput) return;
+    const data = pageData.get(currentPage);
+    if (!data) return;
     const a: Annotation = { tool: 'text', color, text: textInput, x: textPos.x, y: textPos.y + 16 };
-    setAnnotations((prev) => {
-      const next = [...prev, a];
-      annotationsRef.current = next;
-      return next;
-    });
+    const updated = new Map(pageData);
+    updated.set(currentPage, { ...data, annotations: [...data.annotations, a] });
+    setPageData(updated);
     setTextPos(null);
     setTextInput('');
-    setTimeout(redrawCanvas, 0);
+  };
+
+  /* ---------- Text editing (edit existing PDF text) ---------- */
+  const updateTextEdit = (itemId: string, newText: string) => {
+    const data = pageData.get(currentPage);
+    if (!data) return;
+    const item = data.textItems.find((t) => t.id === itemId);
+    if (!item) return;
+
+    const updated = new Map(pageData);
+    const newEdits = new Map(data.textEdits);
+    if (newText === item.text) {
+      newEdits.delete(itemId);
+    } else {
+      newEdits.set(itemId, {
+        id: itemId,
+        originalText: item.text,
+        editedText: newText,
+        item,
+      });
+    }
+    updated.set(currentPage, { ...data, textEdits: newEdits });
+    setPageData(updated);
+  };
+
+  /* ---------- Save ---------- */
+  const hasChanges = () => {
+    for (const data of pageData.values()) {
+      if (data.annotations.length > 0) return true;
+      for (const edit of data.textEdits.values()) {
+        if (edit.editedText !== edit.originalText) return true;
+      }
+    }
+    return false;
   };
 
   const save = async () => {
-    if (!pdfBytesRef.current || annotations.length === 0) return;
+    if (!pdfBytesRef.current || !hasChanges()) return;
     setProcessing(true);
     try {
       const pdf = await PDFDocument.load(pdfBytesRef.current);
-      const page = pdf.getPages()[0];
-      const { width: pw, height: ph } = page.getSize();
-      const canvas = canvasRef.current!;
-      const scaleX = pw / canvas.width;
-      const scaleY = ph / canvas.height;
+      const pages = pdf.getPages();
 
-      for (const a of annotations) {
-        const c = a.color;
-        const r = parseInt(c.slice(1, 3), 16) / 255;
-        const g = parseInt(c.slice(3, 5), 16) / 255;
-        const b = parseInt(c.slice(5, 7), 16) / 255;
+      for (const [pageNum, data] of pageData) {
+        const page = pages[pageNum - 1];
+        const { width: pw, height: ph } = page.getSize();
+        const scaleX = pw / data.viewportWidth;
+        const scaleY = ph / data.viewportHeight;
 
-        if (a.tool === 'rect' && a.x !== undefined) {
+        // Apply text edits: whiteout + redraw
+        for (const edit of data.textEdits.values()) {
+          if (edit.editedText === edit.originalText) continue;
+          const item = edit.item;
+          const estimatedWidth = Math.max(
+            item.pdfFontSize * 0.5 * edit.editedText.length,
+            item.pdfFontSize * 0.5 * edit.originalText.length
+          );
+          const whiteoutWidth = Math.max(item.width * scaleX, estimatedWidth);
+
           page.drawRectangle({
-            x: a.x * scaleX,
-            y: ph - (a.y! + a.height!) * scaleY,
-            width: Math.abs(a.width!) * scaleX,
-            height: Math.abs(a.height!) * scaleY,
-            color: rgb(r, g, b),
-            opacity: 0.3,
-            borderColor: rgb(r, g, b),
-            borderWidth: 1,
+            x: item.pdfX,
+            y: item.pdfY - item.pdfFontSize * 0.2,
+            width: whiteoutWidth + item.pdfFontSize * 0.3,
+            height: item.pdfFontSize * 1.3,
+            color: rgb(1, 1, 1),
+            borderWidth: 0,
           });
-        } else if (a.tool === 'ellipse' && a.x !== undefined) {
-          page.drawEllipse({
-            x: (a.x + a.width! / 2) * scaleX,
-            y: ph - (a.y! + a.height! / 2) * scaleY,
-            xScale: Math.abs(a.width! / 2) * scaleX,
-            yScale: Math.abs(a.height! / 2) * scaleY,
-            color: rgb(r, g, b),
-            opacity: 0.3,
-            borderColor: rgb(r, g, b),
-            borderWidth: 1,
+
+          page.drawText(edit.editedText, {
+            x: item.pdfX,
+            y: item.pdfY + item.pdfFontSize * 0.1,
+            size: item.pdfFontSize,
+            color: rgb(0, 0, 0),
           });
-        } else if (a.tool === 'text' && a.text) {
-          page.drawText(a.text, {
-            x: a.x! * scaleX,
-            y: ph - a.y! * scaleY,
-            size: 12,
-            color: rgb(r, g, b),
-          });
-        } else if ((a.tool === 'pen' || a.tool === 'highlight') && a.points && a.points.length > 1) {
-          for (let i = 0; i < a.points.length - 1; i++) {
-            const p1 = a.points[i];
-            const p2 = a.points[i + 1];
-            page.drawLine({
-              start: { x: p1.x * scaleX, y: ph - p1.y * scaleY },
-              end: { x: p2.x * scaleX, y: ph - p2.y * scaleY },
-              thickness: a.tool === 'highlight' ? 4 : 1,
+        }
+
+        // Apply annotations
+        for (const a of data.annotations) {
+          const c = a.color;
+          const r = parseInt(c.slice(1, 3), 16) / 255;
+          const g = parseInt(c.slice(3, 5), 16) / 255;
+          const b = parseInt(c.slice(5, 7), 16) / 255;
+
+          if (a.tool === 'rect' && a.x !== undefined) {
+            const x = Math.min(a.x, a.x + a.width!);
+            const y = Math.min(a.y!, a.y! + a.height!);
+            page.drawRectangle({
+              x: x * scaleX,
+              y: ph - (y + Math.abs(a.height!)) * scaleY,
+              width: Math.abs(a.width!) * scaleX,
+              height: Math.abs(a.height!) * scaleY,
               color: rgb(r, g, b),
-              opacity: a.tool === 'highlight' ? 0.4 : 1,
+              opacity: 0.3,
+              borderColor: rgb(r, g, b),
+              borderWidth: 1,
             });
+          } else if (a.tool === 'ellipse' && a.x !== undefined) {
+            page.drawEllipse({
+              x: (a.x + a.width! / 2) * scaleX,
+              y: ph - (a.y! + a.height! / 2) * scaleY,
+              xScale: Math.abs(a.width! / 2) * scaleX,
+              yScale: Math.abs(a.height! / 2) * scaleY,
+              color: rgb(r, g, b),
+              opacity: 0.3,
+              borderColor: rgb(r, g, b),
+              borderWidth: 1,
+            });
+          } else if (a.tool === 'text' && a.text) {
+            page.drawText(a.text, {
+              x: a.x! * scaleX,
+              y: ph - a.y! * scaleY,
+              size: 12,
+              color: rgb(r, g, b),
+            });
+          } else if ((a.tool === 'pen' || a.tool === 'highlight') && a.points && a.points.length > 1) {
+            for (let i = 0; i < a.points.length - 1; i++) {
+              const p1 = a.points[i];
+              const p2 = a.points[i + 1];
+              page.drawLine({
+                start: { x: p1.x * scaleX, y: ph - p1.y * scaleY },
+                end: { x: p2.x * scaleX, y: ph - p2.y * scaleY },
+                thickness: a.tool === 'highlight' ? 4 : 1,
+                color: rgb(r, g, b),
+                opacity: a.tool === 'highlight' ? 0.4 : 1,
+              });
+            }
           }
         }
       }
@@ -283,6 +461,7 @@ export function PdfEditorTool({ onBack }: PdfEditorToolProps) {
   };
 
   const tools: { id: Tool; icon: any; label: string }[] = [
+    { id: 'select', icon: MousePointer2, label: 'Select' },
     { id: 'pen', icon: Pencil, label: 'Pen' },
     { id: 'highlight', icon: Highlighter, label: 'Highlight' },
     { id: 'text', icon: Type, label: 'Text' },
@@ -290,17 +469,66 @@ export function PdfEditorTool({ onBack }: PdfEditorToolProps) {
     { id: 'ellipse', icon: Circle, label: 'Ellipse' },
   ];
 
+  const textEditCount = (() => {
+    let count = 0;
+    for (const data of pageData.values()) {
+      count += data.textEdits.size;
+    }
+    return count;
+  })();
+
+  const annotationCount = (() => {
+    let count = 0;
+    for (const data of pageData.values()) {
+      count += data.annotations.length;
+    }
+    return count;
+  })();
+
   return (
-    <ToolLayout title="PDF Editor" description="Annotate the first page with pen, highlight, text, and shapes." onBack={onBack}>
+    <ToolLayout
+      title="PDF Editor"
+      description="Edit text, annotate, and draw on any page of your PDF."
+      onBack={onBack}
+    >
       <FileDropzone onFiles={handleFile} multiple={false} />
-      {file && bgImageRef.current && (
+
+      {file && (
         <div className="mt-6 space-y-4">
+          {/* Page navigation */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between rounded-xl border border-border bg-slate-50 px-4 py-2">
+              <button
+                onClick={() => goToPage(currentPage - 1)}
+                disabled={currentPage <= 1 || loadingPage}
+                className="flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-200 disabled:opacity-40"
+              >
+                <ChevronLeft size={16} /> Prev
+              </button>
+              <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                <FileText size={14} />
+                Page {currentPage} of {totalPages}
+                {loadingPage && <span className="text-xs text-slate-400">(loading…)</span>}
+              </div>
+              <button
+                onClick={() => goToPage(currentPage + 1)}
+                disabled={currentPage >= totalPages || loadingPage}
+                className="flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-200 disabled:opacity-40"
+              >
+                Next <ChevronRight size={16} />
+              </button>
+            </div>
+          )}
+
           {/* Toolbar */}
           <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-slate-50 p-3">
             {tools.map((t) => (
               <button
                 key={t.id}
-                onClick={() => setTool(t.id)}
+                onClick={() => {
+                  setTool(t.id);
+                  setTextPos(null);
+                }}
                 className={`flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
                   tool === t.id ? 'bg-primary text-white' : 'bg-white text-slate-700 hover:bg-slate-100'
                 }`}
@@ -318,47 +546,153 @@ export function PdfEditorTool({ onBack }: PdfEditorToolProps) {
               />
             ))}
             <div className="mx-2 h-6 w-px bg-border" />
-            <button onClick={undo} className="flex items-center gap-1 rounded-lg bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100">
+            <button
+              onClick={undo}
+              disabled={!currentData || currentData.annotations.length === 0}
+              className="flex items-center gap-1 rounded-lg bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-40"
+            >
               <Undo size={14} /> Undo
             </button>
           </div>
 
-          {/* Canvas */}
-          <div className="overflow-auto rounded-xl border border-border bg-white p-2">
-            <canvas
-              ref={canvasRef}
-              className="cursor-crosshair"
-              onMouseDown={start}
-              onMouseMove={move}
-              onMouseUp={end}
-              onMouseLeave={end}
-            />
-          </div>
+          {/* Status */}
+          {(textEditCount > 0 || annotationCount > 0) && (
+            <div className="flex flex-wrap gap-3 text-xs text-slate-500">
+              {textEditCount > 0 && <span>📝 {textEditCount} text edit{textEditCount > 1 ? 's' : ''}</span>}
+              {annotationCount > 0 && <span>✏️ {annotationCount} annotation{annotationCount > 1 ? 's' : ''}</span>}
+            </div>
+          )}
 
-          {/* Text input overlay */}
+          {/* Editor viewport */}
+          {currentData ? (
+            <div className="overflow-auto rounded-xl border border-border bg-white p-2">
+              <div
+                className="relative"
+                style={{ width: currentData.viewportWidth, height: currentData.viewportHeight }}
+              >
+                {/* Background PDF image */}
+                <img
+                  src={currentData.bgImageUrl}
+                  alt={`Page ${currentPage}`}
+                  className="absolute left-0 top-0 block"
+                  style={{ width: currentData.viewportWidth, height: currentData.viewportHeight }}
+                  draggable={false}
+                />
+
+                {/* Text overlay — editable text items */}
+                <div
+                  className="absolute left-0 top-0"
+                  style={{
+                    width: currentData.viewportWidth,
+                    height: currentData.viewportHeight,
+                    pointerEvents: tool === 'select' ? 'auto' : 'none',
+                  }}
+                >
+                  {currentData.textItems.map((item) => {
+                    const edit = currentData.textEdits.get(item.id);
+                    const displayText = edit?.editedText ?? item.text;
+                    return (
+                      <div
+                        key={item.id}
+                        contentEditable
+                        suppressContentEditableWarning
+                        onBlur={(e) => updateTextEdit(item.id, e.currentTarget.textContent || '')}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            (e.currentTarget as HTMLDivElement).blur();
+                          }
+                        }}
+                        onPaste={(e) => {
+                          e.preventDefault();
+                          const text = e.clipboardData.getData('text/plain');
+                          document.execCommand('insertText', false, text);
+                        }}
+                        className="absolute border border-transparent px-0.5 outline-none transition-colors hover:border-blue-300 hover:bg-blue-50/20 focus:border-blue-500 focus:bg-blue-50/40"
+                        style={{
+                          left: item.x,
+                          top: item.y,
+                          minWidth: Math.max(item.width, 20),
+                          minHeight: item.height,
+                          fontSize: item.fontSize,
+                          lineHeight: 1.15,
+                          color: 'transparent',
+                          caretColor: '#2563eb',
+                          pointerEvents: 'auto',
+                          whiteSpace: 'pre',
+                          cursor: 'text',
+                        }}
+                        title="Click to edit text"
+                      >
+                        {displayText}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Annotation canvas */}
+                <canvas
+                  ref={canvasRef}
+                  className="absolute left-0 top-0"
+                  style={{
+                    width: currentData.viewportWidth,
+                    height: currentData.viewportHeight,
+                    pointerEvents: isDrawingTool ? 'auto' : 'none',
+                    cursor: isDrawingTool ? 'crosshair' : 'default',
+                  }}
+                  width={currentData.viewportWidth}
+                  height={currentData.viewportHeight}
+                  onMouseDown={start}
+                  onMouseMove={move}
+                  onMouseUp={end}
+                  onMouseLeave={end}
+                  onClick={handleCanvasClickForText}
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center justify-center rounded-xl border border-border bg-slate-50 py-20 text-sm text-slate-400">
+              Loading page…
+            </div>
+          )}
+
+          {/* Text annotation input */}
           {textPos && (
             <div className="flex items-center gap-2">
               <input
                 autoFocus
                 value={textInput}
                 onChange={(e) => setTextInput(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && addText()}
+                onKeyDown={(e) => e.key === 'Enter' && addTextAnnotation()}
                 placeholder="Type text and press Enter"
                 className="flex-1 rounded-lg border border-border bg-slate-50 px-4 py-2 text-sm"
               />
-              <button onClick={addText} className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-dark">
+              <button
+                onClick={addTextAnnotation}
+                className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-dark"
+              >
                 Add
               </button>
             </div>
           )}
 
+          {/* Hint */}
+          <p className="text-xs text-slate-400">
+            {tool === 'select'
+              ? 'Tip: Click on any text to edit it directly. Switch to a drawing tool to annotate.'
+              : tool === 'text'
+              ? 'Tip: Click anywhere on the page to place a new text annotation.'
+              : 'Tip: Draw on the page. Switch to Select mode to edit existing text.'}
+          </p>
+
+          {/* Save button */}
           <button
             onClick={save}
-            disabled={processing || annotations.length === 0}
+            disabled={processing || !hasChanges()}
             className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white shadow-sm hover:bg-primary-dark disabled:opacity-60"
           >
             <Check size={16} />
-            {processing ? 'Saving...' : 'Download Edited PDF'}
+            {processing ? 'Saving…' : 'Download Edited PDF'}
           </button>
         </div>
       )}

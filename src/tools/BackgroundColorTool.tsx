@@ -44,7 +44,7 @@ export function BackgroundColorTool({ onBack }: BackgroundColorToolProps) {
   };
 
   return (
-    <ToolLayout title="Background Color" description="Change the background color of all pages." onBack={onBack}>
+    <ToolLayout title="Background Color" description="Draw a colored rectangle over all pages. Note: this covers existing content — use with care." onBack={onBack}>
       <FileDropzone onFiles={handleFile} multiple={false} />
       {file && (
         <div className="mt-6 space-y-4">

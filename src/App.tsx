@@ -17,7 +17,7 @@ import { PdfToImagesTool } from './tools/PdfToImagesTool';
 import { ImagesToPdfTool } from './tools/ImagesToPdfTool';
 import { DeletePagesTool } from './tools/DeletePagesTool';
 import { ReversePagesTool } from './tools/ReversePagesTool';
-import { EncryptTool } from './tools/EncryptTool';
+import { AddBlankPageTool } from './tools/AddBlankPageTool';
 import { DecryptTool } from './tools/DecryptTool';
 import { FlattenTool } from './tools/FlattenTool';
 import { RemoveMetadataTool } from './tools/RemoveMetadataTool';
@@ -98,7 +98,7 @@ const categories = [
     label: 'Secure',
     icon: Lock,
     tools: [
-      { id: 'encrypt', title: 'Add Blank Page', description: 'Insert a blank page at start or end', icon: Lock, component: EncryptTool },
+      { id: 'encrypt', title: 'Add Blank Page', description: 'Insert a blank page at start or end', icon: Lock, component: AddBlankPageTool },
       { id: 'decrypt', title: 'Decrypt PDF', description: 'Remove password protection', icon: Unlock, component: DecryptTool },
     ],
   },

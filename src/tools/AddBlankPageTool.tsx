@@ -9,7 +9,7 @@ interface AddBlankPageToolProps {
   onBack: () => void;
 }
 
-export function EncryptTool({ onBack }: AddBlankPageToolProps) {
+export function AddBlankPageTool({ onBack }: AddBlankPageToolProps) {
   const [file, setFile] = useState<File | null>(null);
   const [position, setPosition] = useState<'start' | 'end'>('end');
   const [processing, setProcessing] = useState(false);

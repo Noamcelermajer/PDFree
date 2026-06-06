@@ -12,10 +12,15 @@ interface SignToolProps {
 export function SignTool({ onBack }: SignToolProps) {
   const [file, setFile] = useState<File | null>(null);
   const [processing, setProcessing] = useState(false);
+  const [pageNum, setPageNum] = useState(1);
+  const [position, setPosition] = useState<'bottom-right' | 'bottom-left' | 'top-right' | 'top-left'>('bottom-right');
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
 
-  const handleFile = (files: File[]) => setFile(files[0]);
+  const handleFile = (files: File[]) => {
+    setFile(files[0]);
+    setPageNum(1);
+  };
 
   const getPos = (e: React.MouseEvent | React.TouchEvent) => {
     const canvas = canvasRef.current!;
@@ -58,14 +63,29 @@ export function SignTool({ onBack }: SignToolProps) {
       const dataUrl = canvas.toDataURL('image/png');
       const base64 = dataUrl.split(',')[1];
       const sigImage = await pdf.embedPng(base64);
-      const page = pdf.getPages()[0];
-      const { width } = page.getSize();
-      page.drawImage(sigImage, {
-        x: width - 220,
-        y: 40,
-        width: 200,
-        height: 80,
-      });
+
+      const pages = pdf.getPages();
+      const targetPageIndex = Math.min(Math.max(pageNum - 1, 0), pages.length - 1);
+      const page = pages[targetPageIndex];
+      const { width, height } = page.getSize();
+      const sigWidth = 200;
+      const sigHeight = 80;
+      const margin = 20;
+
+      let x = width - sigWidth - margin;
+      let y = margin;
+      if (position === 'bottom-left') {
+        x = margin;
+        y = margin;
+      } else if (position === 'top-right') {
+        x = width - sigWidth - margin;
+        y = height - sigHeight - margin;
+      } else if (position === 'top-left') {
+        x = margin;
+        y = height - sigHeight - margin;
+      }
+
+      page.drawImage(sigImage, { x, y, width: sigWidth, height: sigHeight });
       downloadBlob(await pdf.save(), 'signed.pdf');
     } finally {
       setProcessing(false);
@@ -73,10 +93,36 @@ export function SignTool({ onBack }: SignToolProps) {
   };
 
   return (
-    <ToolLayout title="Sign PDF" description="Draw your signature and apply it to the first page." onBack={onBack}>
+    <ToolLayout title="Sign PDF" description="Draw your signature and place it on any page." onBack={onBack}>
       <FileDropzone onFiles={handleFile} multiple={false} />
       {file && (
         <div className="mt-6 space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label className="block text-xs font-medium text-slate-700">Page number</label>
+              <input
+                type="number"
+                min={1}
+                value={pageNum}
+                onChange={(e) => setPageNum(Math.max(1, parseInt(e.target.value) || 1))}
+                className="mt-1 w-full rounded-lg border border-border bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700">Position</label>
+              <select
+                value={position}
+                onChange={(e) => setPosition(e.target.value as any)}
+                className="mt-1 w-full rounded-lg border border-border bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+              >
+                <option value="bottom-right">Bottom right</option>
+                <option value="bottom-left">Bottom left</option>
+                <option value="top-right">Top right</option>
+                <option value="top-left">Top left</option>
+              </select>
+            </div>
+          </div>
+
           <div className="rounded-xl border border-border bg-slate-50 p-4">
             <p className="mb-2 text-xs font-medium text-slate-500">Draw your signature</p>
             <canvas

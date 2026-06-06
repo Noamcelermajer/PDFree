@@ -12,7 +12,7 @@ interface SanitizeToolProps {
 export function SanitizeTool({ onBack }: SanitizeToolProps) {
   const [file, setFile] = useState<File | null>(null);
   const [processing, setProcessing] = useState(false);
-  const [removeJS, setRemoveJS] = useState(true);
+
   const [removeMeta, setRemoveMeta] = useState(true);
   const [flatten, setFlatten] = useState(true);
 
@@ -34,9 +34,7 @@ export function SanitizeTool({ onBack }: SanitizeToolProps) {
       if (flatten) {
         try { pdf.getForm().flatten(); } catch {}
       }
-      if (removeJS) {
-        // pdf-lib does not expose JS removal easily; we note this limitation
-      }
+
       downloadBlob(await pdf.save(), 'sanitized.pdf');
     } finally {
       setProcessing(false);
@@ -57,10 +55,7 @@ export function SanitizeTool({ onBack }: SanitizeToolProps) {
               <input type="checkbox" checked={flatten} onChange={(e) => setFlatten(e.target.checked)} className="h-4 w-4 rounded border-border text-primary" />
               Flatten forms & annotations
             </label>
-            <label className="flex items-center gap-2 text-sm text-slate-700">
-              <input type="checkbox" checked={removeJS} onChange={(e) => setRemoveJS(e.target.checked)} className="h-4 w-4 rounded border-border text-primary" />
-              Remove JavaScript actions (best effort)
-            </label>
+
           </div>
           <button
             onClick={sanitize}
