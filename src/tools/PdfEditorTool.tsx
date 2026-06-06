@@ -25,6 +25,8 @@ interface TextItem {
   pdfFontSize: number;
   dir: 'ltr' | 'rtl';
   fontFamily: string;
+  fontWeight: string;
+  fontStyle: string;
 }
 
 interface TextEdit {
@@ -167,6 +169,8 @@ export function PdfEditorTool({ onBack }: PdfEditorToolProps) {
         } else if (fontName2.includes('courier') || fontName2.includes('mono')) {
           fontFamily2 = 'Courier New, monospace';
         }
+        const fontWeight2 = fontName2.includes('bold') || fontName2.includes('black') || fontName2.includes('heavy') ? '700' : '400';
+        const fontStyle2 = fontName2.includes('italic') || fontName2.includes('oblique') ? 'italic' : 'normal';
 
         textItems.push({
           id: `t-${pageNum}-${idx}`,
@@ -181,6 +185,8 @@ export function PdfEditorTool({ onBack }: PdfEditorToolProps) {
           pdfFontSize: Math.hypot(item.transform[0], item.transform[1]) || 12,
           dir: item.dir === 'rtl' ? 'rtl' : 'ltr',
           fontFamily: fontFamily2,
+          fontWeight: fontWeight2,
+          fontStyle: fontStyle2,
         });
       });
 
@@ -667,6 +673,8 @@ export function PdfEditorTool({ onBack }: PdfEditorToolProps) {
                           fontSize: item.fontSize,
                           lineHeight: 1.15,
                           fontFamily: item.fontFamily,
+                          fontWeight: item.fontWeight,
+                          fontStyle: item.fontStyle,
                           caretColor: '#2563eb',
                           pointerEvents: 'auto',
                           whiteSpace: 'pre',
@@ -727,6 +735,24 @@ export function PdfEditorTool({ onBack }: PdfEditorToolProps) {
               </button>
             </div>
           )}
+
+          {/* Disclaimer */}
+          <details className="rounded-xl border border-amber-200 bg-amber-50 text-sm">
+            <summary className="cursor-pointer px-4 py-2.5 font-medium text-amber-800">
+              How this editor works & limitations
+            </summary>
+            <div className="space-y-2 px-4 pb-3 text-amber-700">
+              <p>
+                <strong>Overlay-based editing:</strong> This tool renders the PDF page as an image and places editable text boxes over it. When you save, the original text is whiteouted and your new text is drawn on top using embedded open-source fonts (Noto Sans family).
+              </p>
+              <p>
+                <strong>Font matching is approximate:</strong> The editor tries to detect whether the original text is serif, sans-serif, or monospace, and whether it's bold or italic. It cannot match custom corporate fonts or exact font metrics. During editing you may see a slight font difference — the saved PDF uses proper embedded fonts for correct rendering.
+              </p>
+              <p>
+                <strong>Limitations:</strong> Complex layouts (multi-column, rotated text, forms, scanned pages) may not edit perfectly. Text flow and word wrapping are not automatically recalculated. For pixel-perfect editing of complex documents, use Adobe Acrobat or similar desktop tools.
+              </p>
+            </div>
+          </details>
 
           {/* Hint */}
           <p className="text-xs text-slate-400">
