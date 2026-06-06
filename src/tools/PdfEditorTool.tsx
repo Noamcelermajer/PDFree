@@ -23,6 +23,7 @@ interface TextItem {
   pdfY: number;
   pdfFontSize: number;
   dir: 'ltr' | 'rtl';
+  fontFamily: string;
 }
 
 interface TextEdit {
@@ -158,6 +159,14 @@ export function PdfEditorTool({ onBack }: PdfEditorToolProps) {
         const fontWidthFactor = Math.abs(item.transform[0]) || fontHeight;
         const viewportWidth = item.width * (fontHeight / fontWidthFactor);
 
+        const fontName2 = (item.fontName || '').toLowerCase();
+        let fontFamily2 = 'Arial, Helvetica, sans-serif';
+        if (fontName2.includes('times') || fontName2.includes('serif') || fontName2.includes('roman')) {
+          fontFamily2 = 'Times New Roman, Georgia, serif';
+        } else if (fontName2.includes('courier') || fontName2.includes('mono')) {
+          fontFamily2 = 'Courier New, monospace';
+        }
+
         textItems.push({
           id: `t-${pageNum}-${idx}`,
           text: item.str,
@@ -170,6 +179,7 @@ export function PdfEditorTool({ onBack }: PdfEditorToolProps) {
           pdfY: item.transform[5],
           pdfFontSize: Math.hypot(item.transform[0], item.transform[1]) || 12,
           dir: item.dir === 'rtl' ? 'rtl' : 'ltr',
+          fontFamily: fontFamily2,
         });
       });
 
@@ -624,7 +634,14 @@ export function PdfEditorTool({ onBack }: PdfEditorToolProps) {
                           const text = e.clipboardData.getData('text/plain');
                           document.execCommand('insertText', false, text);
                         }}
-                        className="absolute border px-0.5 outline-none transition-all hover:border-blue-400 hover:bg-blue-100/40 hover:text-black focus:border-blue-500 focus:bg-blue-50/60 focus:text-black"
+                        className={[
+                          'absolute border px-0.5 outline-none transition-all duration-150',
+                          'hover:border-blue-400 hover:bg-white hover:text-black',
+                          'focus:z-10 focus:border-blue-500 focus:bg-white focus:text-black focus:shadow-md',
+                          isEdited
+                            ? 'z-[1] border-amber-400/60 bg-white text-black shadow-sm'
+                            : 'border-transparent text-transparent bg-transparent',
+                        ].join(' ')}
                         style={{
                           left: item.x,
                           top: item.y,
@@ -632,10 +649,7 @@ export function PdfEditorTool({ onBack }: PdfEditorToolProps) {
                           minHeight: item.height,
                           fontSize: item.fontSize,
                           lineHeight: 1.15,
-                          color: isEdited ? '#1a1a1a' : 'rgba(0,0,0,0.18)',
-                          backgroundColor: isEdited ? 'rgba(255,249,196,0.65)' : 'transparent',
-                          borderColor: isEdited ? 'rgba(245,158,11,0.6)' : 'transparent',
-                          textShadow: isEdited ? '0 0 4px rgba(255,255,255,0.9)' : 'none',
+                          fontFamily: item.fontFamily,
                           caretColor: '#2563eb',
                           pointerEvents: 'auto',
                           whiteSpace: 'pre',
